@@ -199,10 +199,7 @@ def crawl_api():
 
     results = []
     errors = []
-    try:
-    subprocess.run(["playwright", "install", "chromium"], check=True)
-except Exception as e:
-    print("[WARN] Không thể tự động cài chromium:", e)
+  
     with sync_playwright() as p:
         for idx, book_id in enumerate(book_ids, 1):
             print(f"\n📚 [{idx}/{len(book_ids)}] Book ID: {book_id}")
@@ -224,4 +221,5 @@ if __name__ == "__main__":
     subprocess.run(["playwright", "install", "chromium"], check=False)
 
     app.run(host="0.0.0.0", port=5000)
+
 
