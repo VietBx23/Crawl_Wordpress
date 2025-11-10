@@ -6,26 +6,14 @@ import time
 import re
 from playwright.sync_api import sync_playwright
 from flask import Flask, request, jsonify
-import os
 import subprocess
 
 # ---------------- CONFIG ----------------
 subprocess.run(["playwright", "install", "chromium"], check=False)
+
 BASE_STORE_URL = "https://www.tadu.com/store/98-a-0-15-a-20-p-{page}-909"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; TaduIDBot/1.0)"}
-NUM_CHAPTERS = 5  # số chương muốn crawl cho mỗi truyện
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
-
-# Thư mục lưu ảnh cho WordPress theo chuẩn năm/tháng
-from datetime import datetime
-def get_wp_uploads_dir():
-    now = datetime.now()
-    year = str(now.year)
-    month = f"{now.month:02d}"
-    uploads_dir = Path(f"../wp-content/uploads/{year}/{month}")
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-    return uploads_dir
+NUM_CHAPTERS = 5  # số chương mặc định mỗi truyện
 
 # ---------------- HELPER REQUESTS ----------------
 def safe_get(url, headers=None, timeout=60, retries=3, sleep=2):
@@ -49,7 +37,7 @@ def get_book_ids(page: int):
         m = re.search(r"/book/(\d+)/", a["href"])
         if m:
             ids.append(m.group(1))
-        if len(ids) >= 5:
+        if len(ids) >= 5:  # lấy tối đa 5 book/trang
             break
     print(f"✅ Tìm thấy {len(ids)} book IDs trên trang {page}.")
     return ids
@@ -78,7 +66,7 @@ def crawl_book_info(book_id: str):
         elif img_url.startswith("/"):
             img_url = "https://www.tadu.com" + img_url
 
-    # Fallback nếu ảnh rỗng hoặc media3.tadu.com//
+    # Fallback nếu ảnh rỗng
     if not img_url or re.match(r"^https://media\d+\.tadu\.com//?$", img_url):
         meta_img = soup.find("meta", property="og:image")
         if meta_img and meta_img.get("content"):
@@ -98,8 +86,7 @@ def crawl_book_info(book_id: str):
         "id": book_id,
         "title": title,
         "author": author,
-        "cover_image": img_url,          # Chỉ lấy URL
-        "cover_image_local": "",         # Bỏ lưu ảnh
+        "cover_image": img_url,
         "description": description,
         "genres": genres,
         "url": url
@@ -121,14 +108,7 @@ def crawl_chapter(page, url):
 
     # Content
     content_div = page.query_selector("#partContent")
-    paragraphs = []
-    if content_div:
-        ps = content_div.query_selector_all("p")
-        for p in ps:
-            text = p.inner_text().strip()
-            if text:
-                paragraphs.append(text)
-    content = "\n".join(paragraphs)
+    content = content_div.inner_text().strip() if content_div else ""
 
     # Next chapter
     next_chap_tag = page.query_selector("a#paging_right")
@@ -140,15 +120,9 @@ def crawl_chapter(page, url):
 
     return title, content, next_url
 
-def crawl_first_n_chapters(playwright, start_url, n=NUM_CHAPTERS):
+def crawl_first_n_chapters(page, start_url, n=NUM_CHAPTERS):
     chapters = []
     url = start_url
-    # browser = playwright.chromium.launch(headless=True)
-    browser = playwright.chromium.launch(
-    headless=True,
-    args=["--no-sandbox", "--disable-dev-shm-usage"]
-)
-    page = browser.new_page()
     for i in range(n):
         print(f"  🔹 Crawl chương {i+1}: {url}")
         title, content, next_url = crawl_chapter(page, url)
@@ -158,13 +132,9 @@ def crawl_first_n_chapters(playwright, start_url, n=NUM_CHAPTERS):
             break
         url = next_url
         time.sleep(1)
-    browser.close()
     return chapters
 
-# ---------------- MAIN ----------------
-
 # ---------------- FLASK API ----------------
-
 app = Flask(__name__)
 
 @app.route("/")
@@ -181,44 +151,38 @@ def crawl_api():
 
     results = []
     errors = []
-  
- with sync_playwright() as p:
-    # 1. Mở 1 browser duy nhất
-    browser = p.chromium.launch(
-        headless=True,
-        args=["--no-sandbox", "--disable-dev-shm-usage"]
-    )
 
-    for idx, book_id in enumerate(book_ids, 1):
-        print(f"\n📚 [{idx}/{len(book_ids)}] Book ID: {book_id}")
-        try:
-            # Crawl info book
-            info = crawl_book_info(book_id)
-            start_url = info["url"] + "1/?isfirstpart=true"
+    # ---------------- Playwright ----------------
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"]
+        )
 
-            # 2. Mở 1 page cho book này
-            page = browser.new_page()
-            chapters = crawl_first_n_chapters(page, start_url, n=num_chapters)
-            page.close()  # giải phóng RAM
+        for idx, book_id in enumerate(book_ids, 1):
+            print(f"\n📚 [{idx}/{len(book_ids)}] Book ID: {book_id}")
+            try:
+                info = crawl_book_info(book_id)
+                start_url = info["url"] + "1/?isfirstpart=true"
 
-            info["chapters"] = chapters
-            results.append(info)
-        except Exception as e:
-            print(f"  ⚠️ Lỗi book {book_id}: {e}")
-            errors.append({"id": book_id, "error": str(e)})
+                # Mở 1 page cho book này
+                page = browser.new_page()
+                chapters = crawl_first_n_chapters(page, start_url, n=num_chapters)
+                page.close()  # giải phóng RAM
 
-    # 3. Đóng browser sau khi xong tất cả
-    browser.close()
+                info["chapters"] = chapters
+                results.append(info)
+            except Exception as e:
+                print(f"  ⚠️ Lỗi book {book_id}: {e}")
+                errors.append({"id": book_id, "error": str(e)})
 
-return jsonify({"results": results, "errors": errors})
+        browser.close()
 
+    return jsonify({"results": results, "errors": errors})
+
+# ---------------- RUN ----------------
 if __name__ == "__main__":
-    import subprocess
     print("🔧 Kiểm tra và cài Chromium nếu cần...")
     subprocess.run(["playwright", "install", "chromium"], check=False)
 
     app.run(host="0.0.0.0", port=5000)
-
-
-
-
