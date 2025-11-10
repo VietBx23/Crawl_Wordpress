@@ -7,8 +7,10 @@ import re
 from playwright.sync_api import sync_playwright
 from flask import Flask, request, jsonify
 import os
+import subprocess
 
 # ---------------- CONFIG ----------------
+subprocess.run(["playwright", "install", "chromium"], check=False)
 BASE_STORE_URL = "https://www.tadu.com/store/98-a-0-15-a-20-p-{page}-909"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; TaduIDBot/1.0)"}
 NUM_CHAPTERS = 5  # số chương muốn crawl cho mỗi truyện
@@ -197,6 +199,10 @@ def crawl_api():
 
     results = []
     errors = []
+    try:
+    subprocess.run(["playwright", "install", "chromium"], check=True)
+except Exception as e:
+    print("[WARN] Không thể tự động cài chromium:", e)
     with sync_playwright() as p:
         for idx, book_id in enumerate(book_ids, 1):
             print(f"\n📚 [{idx}/{len(book_ids)}] Book ID: {book_id}")
@@ -213,6 +219,9 @@ def crawl_api():
     return jsonify({"results": results, "errors": errors})
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    import subprocess
+    print("🔧 Kiểm tra và cài Chromium nếu cần...")
+    subprocess.run(["playwright", "install", "chromium"], check=False)
+
+    app.run(host="0.0.0.0", port=5000)
 
