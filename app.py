@@ -182,20 +182,35 @@ def crawl_api():
     results = []
     errors = []
   
-    with sync_playwright() as p:
-        for idx, book_id in enumerate(book_ids, 1):
-            print(f"\n📚 [{idx}/{len(book_ids)}] Book ID: {book_id}")
-            try:
-                info = crawl_book_info(book_id)
-                start_url = info["url"] + "1/?isfirstpart=true"
-                chapters = crawl_first_n_chapters(p, start_url, n=num_chapters)
-                info["chapters"] = chapters
-                results.append(info)
-            except Exception as e:
-                print(f"  ⚠️ Lỗi book {book_id}: {e}")
-                errors.append({"id": book_id, "error": str(e)})
+ with sync_playwright() as p:
+    # 1. Mở 1 browser duy nhất
+    browser = p.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-dev-shm-usage"]
+    )
 
-    return jsonify({"results": results, "errors": errors})
+    for idx, book_id in enumerate(book_ids, 1):
+        print(f"\n📚 [{idx}/{len(book_ids)}] Book ID: {book_id}")
+        try:
+            # Crawl info book
+            info = crawl_book_info(book_id)
+            start_url = info["url"] + "1/?isfirstpart=true"
+
+            # 2. Mở 1 page cho book này
+            page = browser.new_page()
+            chapters = crawl_first_n_chapters(page, start_url, n=num_chapters)
+            page.close()  # giải phóng RAM
+
+            info["chapters"] = chapters
+            results.append(info)
+        except Exception as e:
+            print(f"  ⚠️ Lỗi book {book_id}: {e}")
+            errors.append({"id": book_id, "error": str(e)})
+
+    # 3. Đóng browser sau khi xong tất cả
+    browser.close()
+
+return jsonify({"results": results, "errors": errors})
 
 if __name__ == "__main__":
     import subprocess
@@ -203,6 +218,7 @@ if __name__ == "__main__":
     subprocess.run(["playwright", "install", "chromium"], check=False)
 
     app.run(host="0.0.0.0", port=5000)
+
 
 
 
