@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: tadu-crawler
+    env: python
+    plan: free
+    buildCommand: |
+      pip install -r requirements.txt
+      playwright install chromium
+    startCommand: python app.py
+    envVars:
+      - key: PORT
+        value: 5000
